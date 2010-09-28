@@ -9,9 +9,10 @@ import SampleFramework as sf
  
 class TutorialApplication(sf.Application):
  
-   def _createScene(self):
-       pass
+    def _createScene(self):
+        pass
 
 
 if __name__ == '__main__':
-    pass
+    ta = TutorialApplication()
+    ta.go()
