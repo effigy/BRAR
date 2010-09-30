@@ -1,235 +1,279 @@
+
 import ogre.renderer.OGRE as ogre
 import ogre.io.OIS as OIS
 import ogre.gui.CEGUI as CEGUI
+
+class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListener, OIS.KeyListener, OIS.JoyStickListener):
+    """
+    This class handles all our ogre and OIS events, mouse/keyboard/joystick
+    depending on how you initialize this class. All events are handled
+    using callbacks (buffered).
+    """
  
-class ExitListener(ogre.FrameListener):
+    mouse = None
+    keyboard = None
+    joy = None
  
-    def __init__(self, keyListener, mouseListener):
+    def __init__(self, renderWindow, bufferedMouse, bufferedKeys, bufferedJoy):
+ 
+        # Initialize the various listener classes we are a subclass from
         ogre.FrameListener.__init__(self)
-        self.keyListener = keyListener
-        self.mouseListener = mouseListener
+        ogre.WindowEventListener.__init__(self)
+        OIS.MouseListener.__init__(self)
+        OIS.KeyListener.__init__(self)
+        OIS.JoyStickListener.__init__(self)
+ 
+        self.renderWindow = renderWindow
+ 
+        # Create the inputManager using the supplied renderWindow
+        windowHnd = self.renderWindow.getCustomAttributeInt("WINDOW")
+        self.inputManager = OIS.createPythonInputSystem([("WINDOW",str(windowHnd))])
+ 
+        # Attempt to get the mouse/keyboard input objects,
+        # and use this same class for handling the callback functions.
+        # These functions are defined later on.
+ 
+        try:
+            if bufferedMouse:
+                self.mouse = self.inputManager.createInputObjectMouse(OIS.OISMouse, bufferedMouse)
+                self.mouse.setEventCallback(self)
+ 
+            if bufferedKeys:
+                self.keyboard = self.inputManager.createInputObjectKeyboard(OIS.OISKeyboard, bufferedKeys)
+                self.keyboard.setEventCallback(self)
+ 
+            if bufferedJoy:
+                self.joy = self.inputManager.createInputObjectJoyStick(OIS.OISJoyStick, bufferedJoy)
+                self.joy.setEventCallback(self)
+ 
+        except Exception, e: # Unable to obtain mouse/keyboard/joy input
+            raise e
+ 
+        # Set this to True when we get an event to exit the application
+        self.quitApplication = False
+ 
+        # Listen for any events directed to the window manager's close button
+        ogre.WindowEventUtilities.addWindowEventListener(self.renderWindow, self)
+    def __del__ (self ):
+        # Clean up OIS 
+        print "QUITING"
+        self.delInputObjects()
+ 
+        OIS.InputManager.destroyInputSystem(self.inputManager)
+        self.inputManager = None
+ 
+        ogre.WindowEventUtilities.removeWindowEventListener(self.renderWindow, self)
+        self.windowClosed(self.renderWindow)
+ 
+    def delInputObjects(self):
+        # Clean up the initialized input objects
+        if self.keyboard:
+            self.inputManager.destroyInputObjectKeyboard(self.keyboard)
+        if self.mouse:
+            self.inputManager.destroyInputObjectMouse(self.mouse)
+        if self.joy:
+            self.inputManager.destroyInputObjectJoyStick(self.joy)
  
     def frameStarted(self, evt):
-        print "+++++++++  ExitListener.frameStarted"
-        if not self.keyListener.keyPressed(evt):
-            print "++++++++ keylistener exit"
+        """ 
+        Called before a frame is displayed, handles events
+        (also those via callback functions, as you need to call capture()
+        on the input objects)
+ 
+        Returning False here exits the application (render loop stops)
+        """
+ 
+        # Capture any buffered events and call any required callback functions
+        if self.keyboard:
+            self.keyboard.capture()
+        if self.mouse:
+            self.mouse.capture()
+        if self.joy:
+            self.joy.capture()
+ 
+            # joystick test
+            axes_int = self.joy.getJoyStickState().mAxes
+            axes = []
+            for i in axes_int:
+                axes.append(i.abs)            
+            print axes
+ 
+        # Neatly close our FrameListener if our renderWindow has been shut down
+        if(self.renderWindow.isClosed()):
             return False
-        self.mouseListener.mousePressed(evt)
-        self.keyListener.keyReleased(evt)
-        self.mouseListener.mouseMoved(evt)
+ 
+        return not self.quitApplication
+ 
+### Window Event Listener callbacks ###
+ 
+    def windowResized(self, renderWindow):
+        pass
+ 
+    def windowClosed(self, renderWindow):
+        # Only close for window that created OIS
+        if(renderWindow == self.renderWindow):
+            del self
+ 
+### Mouse Listener callbacks ###
+ 
+    def mouseMoved(self, evt):
+        # Pass the location of the mouse pointer over to CEGUI
+        CEGUI.System.getSingleton().injectMouseMove(evt.get_state().X.rel, evt.get_state().Y.rel)
         return True
  
-    def __del__(self):
-        pass
-    
-######################
-##   Key Listener   ##
-###################### 
-class KeyListener(OIS.KeyListener, ogre.FrameListener):
-    
-    def __init__(self, keyboard):
-        ogre.FrameListener.__init__(self)
-        OIS.KeyListener.__init__(self)        
-        keyboard.setEventCallback(self)
-        self.Keyboard=keyboard    
-        
+    def mousePressed(self, evt, id):
+        # Handle any CEGUI mouseButton events
+        CEGUI.System.getSingleton().injectMouseButtonDown(self.convertButton(id))
+        return True
+ 
+    def mouseReleased(self, evt, id):
+        # Handle any CEGUI mouseButton events
+        CEGUI.System.getSingleton().injectMouseButtonUp(self.convertButton(id))
+        return True
+ 
+ 
+    def convertButton(self,oisID):
+        if oisID == OIS.MB_Left:
+            return CEGUI.LeftButton
+        elif oisID == OIS.MB_Right:
+            return CEGUI.RightButton
+        elif oisID == OIS.MB_Middle:
+            return CEGUI.MiddleButton
+        else:
+            return CEGUI.LeftButton     
+ 
+### Key Listener callbacks ###
+ 
     def keyPressed(self, evt):
-        print "++++++++++++ key pressed"
-        # Stop Rendering if Escape was pressed.
-        if self.Keyboard.isKeyDown(OIS.KC_ESCAPE):
-            return False
-        # Attach the camera to PitchNode1.
-        if self.Keyboard.isKeyDown(OIS.KC_1):
-            self.camera.parentSceneNode.detachObject(self.camera)
-            self.camNode = self.sceneManager.getSceneNode("CamNode1")
-            self.sceneManager.getSceneNode("PitchNode1").attachObject(self.camera)
-        # Attach the camera to PitchNode2.
-        if self.Keyboard.isKeyDown(OIS.KC_2):
-            self.camera.parentSceneNode.detachObject(self.camera)
-            self.camNode = self.sceneManager.getSceneNode("CamNode2")
-            self.sceneManager.getSceneNode("PitchNode2").attachObject(self.camera)
-        # Move Forward.
-        if self.Keyboard.isKeyDown(OIS.KC_UP) or self.Keyboard.isKeyDown(OIS.KC_W):
-            self.direction.z -= self.move
-        # Move Backward.
-        if self.Keyboard.isKeyDown(OIS.KC_DOWN) or self.Keyboard.isKeyDown(OIS.KC_S):
-            self.direction.z += self.move
-        # Strafe Left.
-        if self.Keyboard.isKeyDown(OIS.KC_LEFT) or self.Keyboard.isKeyDown(OIS.KC_A):
-            self.direction.x -= self.move
-        # Strafe Right.
-        if self.Keyboard.isKeyDown(OIS.KC_RIGHT) or self.Keyboard.isKeyDown(OIS.KC_D):
-            self.direction.x += self.move
-        # Move Up.
-        if self.Keyboard.isKeyDown(OIS.KC_PGUP) or self.Keyboard.isKeyDown(OIS.KC_Q):
-            self.direction.y += self.move
-        # Move Down.
-        if self.Keyboard.isKeyDown(OIS.KC_PGDOWN) or self.Keyboard.isKeyDown(OIS.KC_E):
-            self.direction.y -= self.move
-            
-        return True
-    
+        # Quit the application if we hit the escape button
+        if evt.key == OIS.KC_ESCAPE:
+            self.quitApplication = True
+ 
+        if evt.key == OIS.KC_1:
+            print "hello"
+ 
+            return True
+ 
     def keyReleased(self, evt):
-        # Undo change to the direction vector when the key is released to stop movement.
-        if self.Keyboard.isKeyDown(OIS.KC_UP) or self.Keyboard.isKeyDown(OIS.KC_W):
-            self.direction.z += self.move
-        # Move Backward.
-        if self.Keyboard.isKeyDown(OIS.KC_DOWN) or self.Keyboard.isKeyDown(OIS.KC_S):
-            self.direction.z -= self.move
-        # Strafe Left.
-        if self.Keyboard.isKeyDown(OIS.KC_LEFT) or self.Keyboard.isKeyDown(OIS.KC_A):
-            self.direction.x += self.move
-        # Strafe Right.
-        if self.Keyboard.isKeyDown(OIS.KC_RIGHT) or self.Keyboard.isKeyDown(OIS.KC_D):
-            self.direction.x -= self.move
-        # Move Up.
-        if self.Keyboard.isKeyDown(OIS.KC_PGUP) or self.Keyboard.isKeyDown(OIS.KC_Q):
-            self.direction.y -= self.move
-        # Move Down.
-        if self.Keyboard.isKeyDown(OIS.KC_PGDOWN) or self.Keyboard.isKeyDown(OIS.KC_E):
-            self.direction.y += self.move
-    
-#######################
-##  Mouse Listener   ##
-#######################    
-class MouseListener(OIS.MouseListener, ogre.FrameListener):
-    
-    def __init__(self, mouse):
-        ogre.FrameListener.__init__(self)
-        OIS.MouseListener.__init__(self)
-        mouse.setEventCallback(self)
-        self.Mouse = mouse
-        
-    def mouseMoved(self, evt):
-        ms = self.Mouse.getMouseState()
-        if ms.buttonDown(OIS.MB_Right):
-            self.camNode.yaw(ogre.Degree(-self.rotate
-                * ms.X.rel).valueRadians())
-            self.camNode.getChild(0).pitch(ogre.Degree(-self.rotate
-                * ms.Y.rel).valueRadians())
-    
-    def mousePressed(self, evt):
-        ms = self.Mouse.getMouseState()
-        # Toggle the light.
-        if ms.buttonDown(OIS.MB_Left):
-            light = self.sceneManager.getLight('Light1')
-            light.visible = not light.visible
-    
-    def mouseReleased(self, evt):
         return True
-    
-#########################
-##  Application Class  ##
-#########################    
+ 
+### Joystick Listener callbacks ###
+ 
+    def buttonPressed(self, evt, id):
+        return True
+ 
+    def buttonReleased(self, evt, id):
+        return True
+ 
+    def axisMoved(self, evt, id):
+        return True
+ 
 class Application(object):
  
+    app_title = "MyApplication"
+ 
     def go(self):
+        # See Basic Tutorial 6 for details
         self.createRoot()
         self.defineResources()
         self.setupRenderSystem()
         self.createRenderWindow()
         self.initializeResourceGroups()
         self.setupScene()
-        self.setupInputSystem()
-        self.setupCEGUI()
         self.createFrameListener()
-        self.createScene()
+        self.setupCEGUI()
         self.startRenderLoop()
-        print "+++++++++ out of render loop"
-        self.cleanUp()
+        #self.cleanUp()
  
     def createRoot(self):
         self.root = ogre.Root()
  
     def defineResources(self):
+        # Read the resources.cfg file and add all resource locations in it
         cf = ogre.ConfigFile()
-        cf.load("Resources.cfg")
-        
-        secI = cf.getSectionIterator()
-        
-        while secI.hasMoreElements():
-                secName = secI.peekNextKey()
-                settings = secI.getNext()
-                for i in settings:
-                    ogre.ResourceGroupManager.getSingleton().addResourceLocation(i.value, i.key, secName)
+        cf.load("resources.cfg")
+        seci = cf.getSectionIterator()
+        while seci.hasMoreElements():
+            secName = seci.peekNextKey()
+            settings = seci.getNext()
+ 
+            for item in settings:
+                typeName = item.key
+                archName = item.value
+                ogre.ResourceGroupManager.getSingleton().addResourceLocation(archName, typeName, secName)
+ 
  
     def setupRenderSystem(self):
+        # Show the config dialog if we don't yet have an ogre.cfg file
         if not self.root.restoreConfig() and not self.root.showConfigDialog():
-            raise Exception("User canceled config dialog!")
+            raise Exception("User canceled config dialog! (setupRenderSystem)")
  
     def createRenderWindow(self):
-        self.root.initialise(True, "OGRE!!!")
+        self.root.initialise(True, self.app_title)
  
     def initializeResourceGroups(self):
         ogre.TextureManager.getSingleton().setDefaultNumMipmaps(5)
         ogre.ResourceGroupManager.getSingleton().initialiseAllResourceGroups()
  
     def setupScene(self):
+        self.renderWindow = self.root.getAutoCreatedWindow()
         self.sceneManager = self.root.createSceneManager(ogre.ST_GENERIC, "Default SceneManager")
-        self.camera = self.sceneManager.createCamera('Camera')
-        viewport = self.root.getAutoCreatedWindow().addViewport(self.camera)
+        self.camera = self.sceneManager.createCamera("Camera")
+        viewPort = self.root.getAutoCreatedWindow().addViewport(self.camera)
  
-    def setupInputSystem(self):
-        rWind = self.root.getAutoCreatedWindow()
-        winHandle = rWind.getCustomAttributeInt('WINDOW')
-        paramList = [('WINDOW', str(winHandle))]
-        self.inputManager = OIS.createPythonInputSystem(paramList)
-        
-        # Set-Up Mouse and Keyboard objects
-        self.Keyboard = self.inputManager.createInputObjectKeyboard(OIS.OISKeyboard, True)
-        self.Mouse = self.inputManager.createInputObjectMouse(OIS.OISMouse, True)
-        self.mouseListener = MouseListener(self.Mouse)
-        self.keyListener = KeyListener(self.Keyboard)
-         
-    def setupCEGUI(self):
-        pass
+        self.camera.setPosition(ogre.Vector3(0, 100, -400))
+        self.camera.lookAt(ogre.Vector3(0, 0, 1))
+ 
+ 
+        self.sceneManager.setAmbientLight(ogre.ColourValue(0.7,0.7,0.7))
+        self.sceneManager.setSkyDome(True, 'Examples/CloudySky',4, 8)
+        self.sceneManager.setFog( ogre.FOG_EXP, ogre.ColourValue(1,1,1),0.0002)
+        self.light = self.sceneManager.createLight( 'lightMain')
+        self.light.setPosition ( ogre.Vector3(20, 80, 50) )
+ 
+        self.rn = self.sceneManager.getRootSceneNode()
+ 
+        self.entityOgre = self.sceneManager.createEntity('Ogre','ogrehead.mesh')
+        self.nodeOgre = self.rn.createChildSceneNode('nodeOgre')
+        self.nodeOgre.setPosition(ogre.Vector3(0, 0, 0))
+        self.nodeOgre.attachObject(self.entityOgre)
+ 
  
     def createFrameListener(self):
-        self.frameListener = ExitListener(self.keyListener, self.mouseListener)
-        self.root.addFrameListener(self.frameListener)
+        self.eventListener = EventListener(self.renderWindow, True, True, False) # switch the final "False" into "True" to get joystick support
+        self.root.addFrameListener(self.eventListener)
+ 
+    def setupCEGUI(self):
+        sceneManager = self.sceneManager
+        
+        # CEGUI setup
+        if CEGUI.Version__.startswith("0.6"):
+            self.renderer = CEGUI.OgreCEGUIRenderer(renderWindow, ogre.RENDER_QUEUE_OVERLAY, False, 3000, sceneManager)
+            self.system = CEGUI.System(self.renderer)
+        else:
+            self.renderer = CEGUI.OgreRenderer.bootstrapSystem()
+            self.system = CEGUI.System.getSingleton()
+ 
+        CEGUI.SchemeManager.getSingleton().create("TaharezLookSkin.scheme")
+        self.system.setDefaultMouseCursor("TaharezLook", "MouseArrow")
+        self.system.setDefaultFont("BlueHighway-12")
+ 
+        # Uncomment the following to read in a CEGUI sheet (from CELayoutEditor)
+        # 
+        # self.mainSheet = CEGUI.WindowManager.getSingleton().loadWindowLayout("myapplication.layout")
+        # self.system.setGUISheet(self.mainSheet)
  
     def startRenderLoop(self):
-        print "+++++++ entering render loop"
         self.root.startRendering()
-        
-    def createScene(self):
-        sceneManager = self.sceneManager
-        sceneManager.ambientLight = 0.25, 0.25, 0.25
- 
-        ent = sceneManager.createEntity("Ninja", "ninja.mesh")
-        node = sceneManager.getRootSceneNode().createChildSceneNode("NinjaNode")
-        node.attachObject(ent)
- 
-        light = sceneManager.createLight("Light1")
-        light.type = ogre.Light.LT_POINT
-        light.position = 250, 150, 250
-        light.diffuseColour = 1, 1, 1
-        light.specularColour = 1, 1, 1
- 
-        # create the first camera node/pitch node
-        node = sceneManager.getRootSceneNode().createChildSceneNode("CamNode1",
-            (-400, 200, 400))
-        node.yaw(ogre.Degree(-45))
-        node = node.createChildSceneNode("PitchNode1")
-        node.attachObject(self.camera)
- 
-        # create the second camera node/pitch node
-        node = sceneManager.getRootSceneNode().createChildSceneNode("CamNode2",
-            (0, 200, 400))
-        node.createChildSceneNode("PitchNode2")
  
     def cleanUp(self):
-        self.inputManager.destroyInputObjectKeyboard(self.Keyboard)
-        self.inputManager.destroyInputObjectMouse(self.Mouse)
-        OIS.InputManager.destroyInputSystem(self.inputManager)
-        self.inputManager = None
-    
-    def __del__(self):
-        del self.renderer
+        # Clean up CEGUI
+        print "CLEANING"
+        #del self.renderer
         del self.system
-        del self.mouseListener
-        del self.keyListener
-        del self.frameListener
+ 
+        # Clean up Ogre
+        #del self.exitListener
         del self.root
  
  
