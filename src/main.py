@@ -2,6 +2,101 @@
 import ogre.renderer.OGRE as ogre
 import ogre.io.OIS as OIS
 import ogre.gui.CEGUI as CEGUI
+from noise import *
+ 
+ 
+def sinFunction( tl, br ):
+    return 20.0 * ogre.Math.Sin(tl.x - br.y)
+  
+class LandTile:
+    def __init__(self, topLeft, bottomRight, quads=48):
+        self.tl = topLeft # the base value
+        self.br = bottomRight
+ 
+        self.topLeft = ogre.Vector2(topLeft.x, topLeft.y) # an incremented value
+ 
+        self.numVerts = quads
+ 
+        self.verts = []
+        self.uvs = []
+        self.normals = []
+        self.triangles = []
+ 
+        self.isGenerated = False
+        self.edgeDist = self.br.x - self.tl.x
+ 
+        self.heightMapFunction = sinFunction
+
+ 
+    def getRandom(self, pos):
+        rand = 1000.0 * pnoise2( pos.x, pos.y, octaves=6, persistence=.5 )
+        print pos.x, pos.y, rand
+        return rand
+ 
+    def calcTriangleNormal( self, v1, v2, v3 ):
+        return (v2-v1).crossProduct(v3-v1).normalisedCopy()
+ 
+ 
+    def generate(self):
+        incr = float ( (self.br.x - self.tl.x) / self.numVerts )
+        mNumVerts = 0
+ 
+        for xv in range( 0, self.numVerts, 4):
+            for yv in range(0 , self.numVerts, 4):
+                v1 = ( self.topLeft.x + incr, self.getRandom(ogre.Vector2( self.topLeft.x + incr, self.topLeft.y )), self.topLeft.y )
+                v2 = ( self.topLeft.x, self.getRandom( ogre.Vector2( self.topLeft.x, self.topLeft.y + incr ) ), self.topLeft.y + incr)
+                v3 = ( self.topLeft.x + incr, self.getRandom(self.topLeft + incr), self.topLeft.y + incr)
+                v4 = ( self.topLeft.x, self.getRandom(self.topLeft), self.topLeft.y)
+ 
+                self.verts +=  [v1, v2, v3, v4]
+ 
+                tri1 = (mNumVerts+3, mNumVerts+1, mNumVerts)             # [ (0,3,2), (3,2,1) ]
+                tri2 = (mNumVerts+1, mNumVerts+2, mNumVerts)
+ 
+                self.triangles += [ tri1, tri2 ]
+ 
+                u0 = (self.topLeft.x - self.tl.x) / self.edgeDist
+                v0 = (self.topLeft.y - self.tl.y) / self.edgeDist
+                u1 = (self.topLeft.x + incr - self.tl.x) / self.edgeDist
+                v1 = (self.topLeft.y + incr - self.tl.y) / self.edgeDist
+ 
+                self.uvs += [ (u1,v0), (u0,v1), (u1,v1), (u0,v0) ]
+                self.topLeft.y += incr
+                mNumVerts += 4
+            self.topLeft.x += incr
+            self.topLeft.y = self.tl.y
+ 
+        self.normals = [[0,0,0]] * len(self.verts)
+ 
+        for tri in self.triangles:
+            one = self.verts[tri[0]]
+            two = self.verts[tri[1]]
+            three = self.verts[tri[2]]
+ 
+            v1 = ogre.Vector3(one[0], one[1], one[2])
+            v2 = ogre.Vector3(two[0], two[1], two[2])
+            v3 = ogre.Vector3(three[0], three[1], three[2])
+ 
+            norm = self.calcTriangleNormal( v1, v2, v3 )
+ 
+            self.normals[ tri[0] ] = [norm.x, norm.y, norm.z]
+            self.normals[ tri[1] ] = [norm.x, norm.y, norm.z]
+            self.normals[ tri[2] ] = [norm.x, norm.y, norm.z]
+ 
+ 
+    def buildGeometry(self, msh):
+        msh.begin( "Ogre/Skin" )
+        for x in range(len(self.verts)):
+            msh.position(*self.verts[x])
+            if len(self.normals):
+                msh.normal(*self.normals[x])
+            if len(self.uvs):
+                msh.textureCoord(*self.uvs[x])
+ 
+        for x in range(len(self.triangles)):
+            msh.triangle(*self.triangles[x])
+ 
+        msh.end() 
 
 class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListener, OIS.KeyListener, OIS.JoyStickListener):
     """
@@ -10,11 +105,11 @@ class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListe
     using callbacks (buffered).
     """
  
-    mouse = None
+    mouse = None  
     keyboard = None
     joy = None
  
-    def __init__(self, renderWindow, bufferedMouse, bufferedKeys, bufferedJoy):
+    def __init__(self, sceneManager, renderWindow, bufferedMouse, bufferedKeys, bufferedJoy):
  
         # Initialize the various listener classes we are a subclass from
         ogre.FrameListener.__init__(self)
@@ -22,7 +117,9 @@ class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListe
         OIS.MouseListener.__init__(self)
         OIS.KeyListener.__init__(self)
         OIS.JoyStickListener.__init__(self)
- 
+        
+        self.sceneManager = sceneManager
+        self.camera = self.sceneManager.getCamera("Cam1")
         self.renderWindow = renderWindow
  
         # Create the inputManager using the supplied renderWindow
@@ -54,6 +151,11 @@ class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListe
  
         # Listen for any events directed to the window manager's close button
         ogre.WindowEventUtilities.addWindowEventListener(self.renderWindow, self)
+        
+        self.rotate = .1
+        self.move = 250
+        self.direction = ogre.Vector3(0,0,0)
+        
     def __del__ (self ):
         # Clean up OIS 
         print "QUITING"
@@ -88,6 +190,7 @@ class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListe
             self.keyboard.capture()
         if self.mouse:
             self.mouse.capture()
+            self.mouseMoved(evt)
         if self.joy:
             self.joy.capture()
  
@@ -97,11 +200,13 @@ class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListe
             for i in axes_int:
                 axes.append(i.abs)            
             print axes
- 
+        
+        camNode = self.camera.parentSceneNode.parentSceneNode
+        camNode.translate(camNode.orientation * self.direction * evt.timeSinceLastFrame)
         # Neatly close our FrameListener if our renderWindow has been shut down
         if(self.renderWindow.isClosed()):
             return False
- 
+        
         return not self.quitApplication
  
 ### Window Event Listener callbacks ###
@@ -118,7 +223,11 @@ class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListe
  
     def mouseMoved(self, evt):
         # Pass the location of the mouse pointer over to CEGUI
-        CEGUI.System.getSingleton().injectMouseMove(evt.get_state().X.rel, evt.get_state().Y.rel)
+        ms = self.mouse.getMouseState()
+        if ms.buttonDown(OIS.MB_Left):
+            camNode = self.camera.parentSceneNode.parentSceneNode
+            camNode.yaw(ogre.Degree(-self.rotate * ms.X.rel).valueRadians())
+            camNode.getChild(0).pitch(ogre.Degree(self.rotate * ms.Y.rel).valueRadians())
         return True
  
     def mousePressed(self, evt, id):
@@ -146,15 +255,42 @@ class EventListener(ogre.FrameListener, ogre.WindowEventListener, OIS.MouseListe
  
     def keyPressed(self, evt):
         # Quit the application if we hit the escape button
+        print evt, evt.key
         if evt.key == OIS.KC_ESCAPE:
             self.quitApplication = True
  
         if evt.key == OIS.KC_1:
             print "hello"
- 
-            return True
+        if evt.key == OIS.KC_W or evt.key == OIS.KC_UP:
+            self.direction.z += self.move
+        if evt.key == OIS.KC_S or evt.key == OIS.KC_DOWN:
+            self.direction.z -= self.move
+        if evt.key == OIS.KC_A or evt.key == OIS.KC_LEFT:
+            self.direction.x += self.move
+        if evt.key == OIS.KC_D or evt.key == OIS.KC_RIGHT:
+            self.direction.x -= self.move
+        if evt.key == OIS.KC_Q or evt.key == OIS.KC_PGUP:
+            self.direction.y += self.move
+        if evt.key == OIS.KC_E or evt.key == OIS.KC_PGDOWN:
+            self.direction.y -= self.move    
+        
+        return True
  
     def keyReleased(self, evt):
+        
+        if evt.key == OIS.KC_W or evt.key == OIS.KC_UP:
+            self.direction.z -= self.move
+        if evt.key == OIS.KC_S or evt.key == OIS.KC_DOWN:
+            self.direction.z += self.move
+        if evt.key == OIS.KC_A or evt.key == OIS.KC_LEFT:
+            self.direction.x -= self.move
+        if evt.key == OIS.KC_D or evt.key == OIS.KC_RIGHT:
+            self.direction.x += self.move
+        if evt.key == OIS.KC_Q or evt.key == OIS.KC_PGUP:
+            self.direction.y -= self.move
+        if evt.key == OIS.KC_E or evt.key == OIS.KC_PGDOWN:
+            self.direction.y += self.move    
+        
         return True
  
 ### Joystick Listener callbacks ###
@@ -218,10 +354,10 @@ class Application(object):
     def setupScene(self):
         self.renderWindow = self.root.getAutoCreatedWindow()
         self.sceneManager = self.root.createSceneManager(ogre.ST_GENERIC, "Default SceneManager")
-        self.camera = self.sceneManager.createCamera("Camera")
+        self.camera = self.sceneManager.createCamera("Cam1")
         viewPort = self.root.getAutoCreatedWindow().addViewport(self.camera)
- 
-        self.camera.setPosition(ogre.Vector3(0, 100, -400))
+        
+        self.sceneManager.getRootSceneNode().createChildSceneNode("CamNode1", (0, 100, -400)).createChildSceneNode("PitchNode1").attachObject(self.camera)
         self.camera.lookAt(ogre.Vector3(0, 0, 1))
  
  
@@ -233,14 +369,19 @@ class Application(object):
  
         self.rn = self.sceneManager.getRootSceneNode()
  
-        self.entityOgre = self.sceneManager.createEntity('Ogre','ogrehead.mesh')
-        self.nodeOgre = self.rn.createChildSceneNode('nodeOgre')
-        self.nodeOgre.setPosition(ogre.Vector3(0, 0, 0))
-        self.nodeOgre.attachObject(self.entityOgre)
+        
+        manObj = self.sceneManager.createManualObject("NoisyLand")
+ 
+        test = LandTile( ogre.Vector2( 0,0 ), ogre.Vector2( 50000, 50000 ), 128 )
+        test.generate()
+        test.buildGeometry( manObj )
+ 
+        node = self.sceneManager.getRootSceneNode().createChildSceneNode()
+        node.attachObject( manObj )
  
  
     def createFrameListener(self):
-        self.eventListener = EventListener(self.renderWindow, True, True, False) # switch the final "False" into "True" to get joystick support
+        self.eventListener = EventListener(self.sceneManager, self.renderWindow, True, True, False) # switch the final "False" into "True" to get joystick support
         self.root.addFrameListener(self.eventListener)
  
     def setupCEGUI(self):
